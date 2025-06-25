@@ -46,9 +46,6 @@ struct Object
     float dx;
     float dy;
 
-    unsigned short debounceX;
-    unsigned short debounceY;
-
     float size;
     float mass;
 };
@@ -276,9 +273,6 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
     {
         // Add an object to the simulation
         struct Object circle;
-
-        circle.debounceX = 0;
-        circle.debounceY = 0;
 
         circle.dx = 0.0f;
         circle.dy = 0.0f;
