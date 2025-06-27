@@ -62,7 +62,6 @@ struct Object
     float mass;
 
     struct cirBuffer trailBuffer;
-
 };
 
 /* This structure defines an Object container, used to contain objects. */
@@ -96,9 +95,6 @@ float distance(float x1, float y1, float x2, float y2)
 /* This function draws a circle*/
 void DrawCircle(const float size, float x, float y)
 {
-    int i;
-
-    y = y - (size / 2.0f);
 
     int detail = (int)(4 + SDL_logf(size + 1.0f) * 10.0f);
     if (detail > 360)
@@ -184,17 +180,17 @@ void ClearList_TL(struct TextLabelList *WishedList)
 }
 
 void writeCirBuffer(struct cirBuffer *wishedBuffer, struct SDL_FRect passedRect)
-{   
+{
     wishedBuffer->buffer[wishedBuffer->writePointer] = passedRect;
     wishedBuffer->writePointer = (wishedBuffer->writePointer + 1) % wishedBuffer->capacity;
-    
+
     if (wishedBuffer->count < wishedBuffer->capacity)
     {
         ++wishedBuffer->count;
     }
 }
 
-struct SDL_FRect* readCirBuffer(struct cirBuffer *wishedBuffer)
+struct SDL_FRect *readCirBuffer(struct cirBuffer *wishedBuffer)
 {
     struct SDL_FRect *value = &wishedBuffer->buffer[wishedBuffer->readPointer];
     wishedBuffer->readPointer = (wishedBuffer->readPointer + 1) % wishedBuffer->capacity;
@@ -219,7 +215,6 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
         SDL_Log("Couldn't create window/renderer: %s", SDL_GetError());
         return SDL_APP_FAILURE;
     }
-
 
     if (!SDL_SetRenderVSync(renderer, SDL_RENDERER_VSYNC_ADAPTIVE))
     {
@@ -355,7 +350,8 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
         // Reset capacity after successful malloc
         ObjectContainer.Capacity = NUMBER_OF_BALLS;
         ObjectContainer.Data = SDL_malloc(ObjectContainer.Capacity * sizeof(struct Object));
-        if (!ObjectContainer.Data) {
+        if (!ObjectContainer.Data)
+        {
             SDL_Log("Failed to reallocate ObjectContainer after ClearList.");
             return SDL_APP_FAILURE;
         }
@@ -498,7 +494,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
         for (int i = 0; i < selfObject->trailBuffer.count; ++i)
         {
             struct SDL_FRect *trail = readCirBuffer(&selfObject->trailBuffer);
-            
+
             /* Calculate relative coordinates*/
             float TrailRelativeX = cameraRootX - trail->x;
             float TrailRelativeY = cameraRootY - trail->y;
@@ -506,30 +502,28 @@ SDL_AppResult SDL_AppIterate(void *appstate)
             /* Apply zoom*/
             TrailRelativeX *= zoom;
             TrailRelativeY *= zoom;
-            float TrailSizeX = trail->w ;
-            float TrailSizeY = trail->h ;
+            float TrailSizeX = trail->w;
+            float TrailSizeY = trail->h;
 
             if (!(
-            TrailRelativeX + TrailSizeX < 0 || TrailRelativeX - TrailSizeX > WindowWidth ||
-            TrailRelativeY + TrailSizeY < 0 || TrailRelativeY - TrailSizeY > WindowHeight))
+                    TrailRelativeX + TrailSizeX < 0 || TrailRelativeX - TrailSizeX > WindowWidth ||
+                    TrailRelativeY + TrailSizeY < 0 || TrailRelativeY - TrailSizeY > WindowHeight))
             {
                 SDL_FRect screenRect = {
                     .x = TrailRelativeX,
                     .y = TrailRelativeY,
                     .w = TrailSizeX,
-                    .h = TrailSizeY
-                }; // Create a copy 
+                    .h = TrailSizeY}; // Create a copy
 
                 Uint8 r, g, b, a;
                 int steps = (selfObject->trailBuffer.readPointer - 1 - selfObject->trailBuffer.writePointer + selfObject->trailBuffer.capacity) % selfObject->trailBuffer.capacity;
                 Uint8 alphaval = 255.0f * (steps / (float)selfObject->trailBuffer.capacity);
-                
+
                 SDL_GetRenderDrawColor(renderer, &r, &g, &b, &a);
-                SDL_SetRenderDrawColor(renderer, r, g, b,  alphaval); 
+                SDL_SetRenderDrawColor(renderer, r, g, b, alphaval);
                 SDL_RenderFillRect(renderer, &screenRect);
                 SDL_SetRenderDrawColor(renderer, r, g, b, a);
             }
-
         }
 
         selfObject->x += selfObject->dx * dt; // Apply dx
@@ -546,13 +540,12 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 
         /* Check if object is out-of-bound, if yes then don't render*/
         if (!(
-            ObjectRelativeX + ObjectSize < 0 || ObjectRelativeX - ObjectSize > WindowWidth ||
-            ObjectRelativeY + ObjectSize < 0 || ObjectRelativeY - ObjectSize > WindowHeight))
+                ObjectRelativeX + ObjectSize < 0 || ObjectRelativeX - ObjectSize > WindowWidth ||
+                ObjectRelativeY + ObjectSize < 0 || ObjectRelativeY - ObjectSize > WindowHeight))
         {
             /* Render the object*/
             DrawCircle(ObjectSize, ObjectRelativeX, ObjectRelativeY);
         }
-
     }
 
     // Render text
