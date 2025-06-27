@@ -151,12 +151,14 @@ int AddItem_TL(struct TextLabelList *WishedList, struct TextLabel PassedObject)
 
 void ClearList(struct ObjectList *WishedList)
 {
-
-    for (int i = 0; i < WishedList->Capacity; ++i)
+    for (int i = 0; i < WishedList->NumItems; ++i)
     {
         struct Object *obj = &WishedList->Data[i];
-        SDL_free(obj->trailBuffer.buffer);
-        obj->trailBuffer.buffer = NULL;
+        if (obj->trailBuffer.buffer != NULL)
+        {
+            SDL_free(obj->trailBuffer.buffer);
+            obj->trailBuffer.buffer = NULL;
+        }
         obj->trailBuffer.capacity = 10;
         obj->trailBuffer.count = 0;
         obj->trailBuffer.readPointer = 0;
@@ -350,7 +352,13 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
     {
         // Delete all objects
         ClearList(&ObjectContainer);
+        // Reset capacity after successful malloc
+        ObjectContainer.Capacity = NUMBER_OF_BALLS;
         ObjectContainer.Data = SDL_malloc(ObjectContainer.Capacity * sizeof(struct Object));
+        if (!ObjectContainer.Data) {
+            SDL_Log("Failed to reallocate ObjectContainer after ClearList.");
+            return SDL_APP_FAILURE;
+        }
     }
 
     if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN)
