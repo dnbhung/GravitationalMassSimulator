@@ -37,6 +37,18 @@ const float zoomStep = 0.1f;
 float maximumZoom = 10.0f;
 float minimumZoom = 0.05f;
 
+/* Circular buffer*/
+struct cirBuffer
+{
+    int writePointer;
+    int readPointer;
+
+    int count;
+    int capacity;
+
+    struct SDL_FRect *buffer;
+};
+
 /* This structure defines an Object.*/
 struct Object
 {
@@ -48,6 +60,9 @@ struct Object
 
     float size;
     float mass;
+
+    struct cirBuffer trailBuffer;
+
 };
 
 /* This structure defines an Object container, used to contain objects. */
@@ -136,6 +151,18 @@ int AddItem_TL(struct TextLabelList *WishedList, struct TextLabel PassedObject)
 
 void ClearList(struct ObjectList *WishedList)
 {
+
+    for (int i = 0; i < WishedList->Capacity; ++i)
+    {
+        struct Object *obj = &WishedList->Data[i];
+        SDL_free(obj->trailBuffer.buffer);
+        obj->trailBuffer.buffer = NULL;
+        obj->trailBuffer.capacity = 10;
+        obj->trailBuffer.count = 0;
+        obj->trailBuffer.readPointer = 0;
+        obj->trailBuffer.writePointer = 0;
+    }
+
     SDL_free(WishedList->Data);
     WishedList->Data = NULL;
     WishedList->NumItems = 0;
@@ -152,6 +179,24 @@ void ClearList_TL(struct TextLabelList *WishedList)
     WishedList->Data = NULL;
     WishedList->NumItems = 0;
     WishedList->Capacity = 10;
+}
+
+void writeCirBuffer(struct cirBuffer *wishedBuffer, struct SDL_FRect passedRect)
+{   
+    wishedBuffer->buffer[wishedBuffer->writePointer] = passedRect;
+    wishedBuffer->writePointer = (wishedBuffer->writePointer + 1) % wishedBuffer->capacity;
+    
+    if (wishedBuffer->count < wishedBuffer->capacity)
+    {
+        ++wishedBuffer->count;
+    }
+}
+
+struct SDL_FRect* readCirBuffer(struct cirBuffer *wishedBuffer)
+{
+    struct SDL_FRect *value = &wishedBuffer->buffer[wishedBuffer->readPointer];
+    wishedBuffer->readPointer = (wishedBuffer->readPointer + 1) % wishedBuffer->capacity;
+    return value;
 }
 
 /* This function runs once at startup. */
@@ -257,7 +302,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
             return SDL_APP_FAILURE;
         }
     }
-
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     return SDL_APP_CONTINUE; /* carry on with the program! */
 }
 
@@ -287,6 +332,12 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
         circle.x = cameraRootX - MouseX / zoom;
         // Calculate the mass according to the size
         circle.mass = circle.size * circle.size * PI * 8;
+
+        circle.trailBuffer.capacity = 100;
+        circle.trailBuffer.count = 0;
+        circle.trailBuffer.readPointer = 0;
+        circle.trailBuffer.writePointer = 0;
+        circle.trailBuffer.buffer = SDL_malloc(circle.trailBuffer.capacity * sizeof(struct SDL_FRect));
 
         AddItem(&ObjectContainer, circle);
     }
@@ -372,7 +423,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
         dt = 0.05f; // cap at 50ms (20 FPS)
 
     /* as you can see from this, rendering draws over whatever was drawn before it. */
-    SDL_SetRenderDrawColor(renderer, 1, 1, 1, SDL_ALPHA_OPAQUE); /* grey, full alpha */
+    SDL_SetRenderDrawColor(renderer, 1, 1, 1, SDL_ALPHA_OPAQUE); /* grey, full alpha (full opacity) */
     SDL_RenderClear(renderer);                                   /* start with a blank canvas. */
 
     SDL_SetRenderDrawColor(renderer, 255, 255, 255, SDL_ALPHA_OPAQUE); /* while, full alpha */
@@ -429,6 +480,50 @@ SDL_AppResult SDL_AppIterate(void *appstate)
             otherObject->dy -= directionY * otherAccel * dt;
         }
 
+        /* Append trail*/
+        writeCirBuffer(&selfObject->trailBuffer, (SDL_FRect){selfObject->x - 1.0f, selfObject->y - 1.0f, 2.0f, 2.0f});
+        /* Render trail*/
+
+        int start = (selfObject->trailBuffer.writePointer - selfObject->trailBuffer.count + selfObject->trailBuffer.capacity) % selfObject->trailBuffer.capacity;
+        selfObject->trailBuffer.readPointer = start;
+
+        for (int i = 0; i < selfObject->trailBuffer.count; ++i)
+        {
+            struct SDL_FRect *trail = readCirBuffer(&selfObject->trailBuffer);
+            
+            /* Calculate relative coordinates*/
+            float TrailRelativeX = cameraRootX - trail->x;
+            float TrailRelativeY = cameraRootY - trail->y;
+
+            /* Apply zoom*/
+            TrailRelativeX *= zoom;
+            TrailRelativeY *= zoom;
+            float TrailSizeX = trail->w ;
+            float TrailSizeY = trail->h ;
+
+            if (!(
+            TrailRelativeX + TrailSizeX < 0 || TrailRelativeX - TrailSizeX > WindowWidth ||
+            TrailRelativeY + TrailSizeY < 0 || TrailRelativeY - TrailSizeY > WindowHeight))
+            {
+                SDL_FRect screenRect = {
+                    .x = TrailRelativeX,
+                    .y = TrailRelativeY,
+                    .w = TrailSizeX,
+                    .h = TrailSizeY
+                }; // Create a copy 
+
+                Uint8 r, g, b, a;
+                int steps = (selfObject->trailBuffer.readPointer - 1 - selfObject->trailBuffer.writePointer + selfObject->trailBuffer.capacity) % selfObject->trailBuffer.capacity;
+                Uint8 alphaval = 255.0f * (steps / (float)selfObject->trailBuffer.capacity);
+                
+                SDL_GetRenderDrawColor(renderer, &r, &g, &b, &a);
+                SDL_SetRenderDrawColor(renderer, r, g, b,  alphaval); 
+                SDL_RenderFillRect(renderer, &screenRect);
+                SDL_SetRenderDrawColor(renderer, r, g, b, a);
+            }
+
+        }
+
         selfObject->x += selfObject->dx * dt; // Apply dx
         selfObject->y += selfObject->dy * dt; // Apply dy
 
@@ -442,14 +537,14 @@ SDL_AppResult SDL_AppIterate(void *appstate)
         float ObjectSize = selfObject->size * zoom;
 
         /* Check if object is out-of-bound, if yes then don't render*/
-        if (
+        if (!(
             ObjectRelativeX + ObjectSize < 0 || ObjectRelativeX - ObjectSize > WindowWidth ||
-            ObjectRelativeY + ObjectSize < 0 || ObjectRelativeY - ObjectSize > WindowHeight)
+            ObjectRelativeY + ObjectSize < 0 || ObjectRelativeY - ObjectSize > WindowHeight))
         {
-            continue; // Object out of bound, skip rendering this object
+            /* Render the object*/
+            DrawCircle(ObjectSize, ObjectRelativeX, ObjectRelativeY);
         }
-        /* Render the object*/
-        DrawCircle(ObjectSize, ObjectRelativeX, ObjectRelativeY);
+
     }
 
     // Render text
