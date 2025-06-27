@@ -103,7 +103,9 @@ void DrawCircle(const float size, float x, float y)
     float step = 2.0f * PI / detail;
     for (float angle = 0; angle < 2.0f * PI; angle += step)
     {
-        SDL_RenderPoint(renderer, x + SDL_sinf(angle) * size, y + SDL_cosf(angle) * size);
+        float px = x + SDL_cosf(angle) * size;
+        float py = y + SDL_sinf(angle) * size;
+        SDL_RenderPoint(renderer, (int)px, (int)py);
     }
 }
 /* This function adds an item into a provided list. If the list is full, it would automatically reallocate room for 10 more objects.*/
