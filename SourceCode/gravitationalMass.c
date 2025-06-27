@@ -159,7 +159,7 @@ void ClearList(struct ObjectList *WishedList)
             SDL_free(obj->trailBuffer.buffer);
             obj->trailBuffer.buffer = NULL;
         }
-        obj->trailBuffer.capacity = 10;
+        obj->trailBuffer.capacity = 100;
         obj->trailBuffer.count = 0;
         obj->trailBuffer.readPointer = 0;
         obj->trailBuffer.writePointer = 0;
