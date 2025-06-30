@@ -10,8 +10,9 @@ static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
 static TTF_Font *font = NULL;
 
-const unsigned short NUMBER_OF_BALLS = 10;
-const float PI = 3.14159265f;
+#define NUMBER_OF_BALLS 10
+#define NUMBER_OF_TRAIL_PARTICLES 150
+#define PI 3.14159265f
 
 Uint64 lastTime;
 struct ObjectList ObjectContainer;
@@ -21,6 +22,7 @@ int WindowHeight;
 int WindowWidth;
 static int collision = 1;
 static int dragging = 0;
+static int paused = 0;
 
 float CameraX = 0;
 float CameraY = 0;
@@ -96,17 +98,25 @@ float distance(float x1, float y1, float x2, float y2)
 void DrawCircle(const float size, float x, float y)
 {
 
-    int detail = (int)(4 + SDL_logf(size + 1.0f) * 10.0f);
+    int detail = (int)(4 + SDL_logf(size + 1.0f) * 15.0f);
     if (detail > 360)
         detail = 360;
 
     float step = 2.0f * PI / detail;
+
+    int i = 0;
+    struct SDL_FPoint *cirPoints = SDL_malloc(detail * sizeof(struct SDL_FPoint));
+
     for (float angle = 0; angle < 2.0f * PI; angle += step)
     {
         float px = x + SDL_cosf(angle) * size;
         float py = y + SDL_sinf(angle) * size;
-        SDL_RenderPoint(renderer, (int)px, (int)py);
+        cirPoints[i] = (struct SDL_FPoint){px, py};
+        ++i;
+        if (i >= detail) break;
     }
+    SDL_RenderPoints(renderer, cirPoints, detail);
+    SDL_free(cirPoints);
 }
 /* This function adds an item into a provided list. If the list is full, it would automatically reallocate room for 10 more objects.*/
 int AddItem(struct ObjectList *WishedList, struct Object PassedObject)
@@ -157,7 +167,7 @@ void ClearList(struct ObjectList *WishedList)
             SDL_free(obj->trailBuffer.buffer);
             obj->trailBuffer.buffer = NULL;
         }
-        obj->trailBuffer.capacity = 100;
+        obj->trailBuffer.capacity = NUMBER_OF_TRAIL_PARTICLES;
         obj->trailBuffer.count = 0;
         obj->trailBuffer.readPointer = 0;
         obj->trailBuffer.writePointer = 0;
@@ -332,7 +342,7 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
         // Calculate the mass according to the size
         circle.mass = circle.size * circle.size * PI * 8;
 
-        circle.trailBuffer.capacity = 100;
+        circle.trailBuffer.capacity = NUMBER_OF_TRAIL_PARTICLES;
         circle.trailBuffer.count = 0;
         circle.trailBuffer.readPointer = 0;
         circle.trailBuffer.writePointer = 0;
@@ -357,6 +367,10 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
             SDL_Log("Failed to reallocate ObjectContainer after ClearList.");
             return SDL_APP_FAILURE;
         }
+    }
+    else if (event->type == SDL_EVENT_KEY_DOWN && event->key.repeat == 0 && event->key.scancode == SDL_SCANCODE_O)
+    {
+        paused = !paused;
     }
 
     if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN)
@@ -410,147 +424,146 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
     {
         WindowWidth = event->window.data1;
         WindowHeight = event->window.data2;
+
+        /* Update cameraRoot accordingly*/
+        cameraRootX = CameraX + (WindowWidth * 0.5f) / zoom;
+        cameraRootY = CameraY + (WindowHeight * 0.5f) / zoom;
     }
 
     return SDL_APP_CONTINUE; /* carry on with the program! */
 }
 
-/* This function runs once per frame, and is the heart of the program. */
-SDL_AppResult SDL_AppIterate(void *appstate)
+void calcPhysicsBetween2Objects(struct Object *selfObject, struct Object *otherObject, float dt)
 {
-    int i;
+    float distanceBetweenObject = distance(otherObject->x, otherObject->y, selfObject->x, selfObject->y);
 
-    Uint64 now = SDL_GetPerformanceCounter();
-    Uint64 freq = SDL_GetPerformanceFrequency();
-
-    float dt = (now - lastTime) / (float)freq;
-    lastTime = now;
-    if (dt > 0.05f)
-        dt = 0.05f; // cap at 50ms (20 FPS)
-
-    /* as you can see from this, rendering draws over whatever was drawn before it. */
-    SDL_SetRenderDrawColor(renderer, 1, 1, 1, SDL_ALPHA_OPAQUE); /* grey, full alpha (full opacity) */
-    SDL_RenderClear(renderer);                                   /* start with a blank canvas. */
-
-    SDL_SetRenderDrawColor(renderer, 255, 255, 255, SDL_ALPHA_OPAQUE); /* while, full alpha */
-
-    // Render and handle Objects
-    for (int i = 0; i < ObjectContainer.NumItems; ++i)
+    if (distanceBetweenObject <= selfObject->size + otherObject->size) // Collision, neuron activation, DOPAMINE RELEASED
     {
-        struct Object *selfObject = &ObjectContainer.Data[i];
-
-        for (int j = i + 1; j < ObjectContainer.NumItems; ++j)
+        if (!collision)
         {
-            struct Object *otherObject = &ObjectContainer.Data[j];
-            float distanceBetweenObject = distance(otherObject->x, otherObject->y, selfObject->x, selfObject->y);
-
-            if (distanceBetweenObject <= selfObject->size + otherObject->size) // Collision, neuron activation, DOPAMINE RELEASED
-            {
-                if (!collision)
-                {
-                    continue;
-                }
-
-                float m1 = selfObject->mass;
-                float m2 = otherObject->mass;
-
-                // 1D elastic collision formula for dx (repeat for dy)
-                float newDx1 = (selfObject->dx * (m1 - m2) + 2 * m2 * otherObject->dx) / (m1 + m2);
-                float newDx2 = (otherObject->dx * (m2 - m1) + 2 * m1 * selfObject->dx) / (m1 + m2);
-
-                float newDy1 = (selfObject->dy * (m1 - m2) + 2 * m2 * otherObject->dy) / (m1 + m2);
-                float newDy2 = (otherObject->dy * (m2 - m1) + 2 * m1 * selfObject->dy) / (m1 + m2);
-
-                selfObject->dx = newDx1;
-                selfObject->dy = newDy1;
-                otherObject->dx = newDx2;
-                otherObject->dy = newDy2;
-                continue;
-            }
-
-            /* Newton's Law of Universal Gravitation*/
-            float force = 1000.0f * ((selfObject->mass * otherObject->mass) / (distanceBetweenObject * distanceBetweenObject) + 50.0f);
-
-            /* Normalizing DirectionX and DirectionY*/
-            float invDist = 1.0f / distanceBetweenObject;
-            float directionX = (otherObject->x - selfObject->x) * invDist;
-            float directionY = (otherObject->y - selfObject->y) * invDist;
-
-            /* Finding acceleration with a formula derived from Newton's second law */
-            float selfAccel = force / selfObject->mass;
-            selfObject->dx += directionX * selfAccel * dt;
-            selfObject->dy += directionY * selfAccel * dt;
-
-            float otherAccel = force / otherObject->mass;
-            otherObject->dx -= directionX * otherAccel * dt;
-            otherObject->dy -= directionY * otherAccel * dt;
+            return;
         }
 
-        /* Append trail*/
-        writeCirBuffer(&selfObject->trailBuffer, (SDL_FRect){selfObject->x - 1.0f, selfObject->y - 1.0f, 2.0f, 2.0f});
-        /* Render trail*/
+        float m1 = selfObject->mass;
+        float m2 = otherObject->mass;
 
-        int start = (selfObject->trailBuffer.writePointer - selfObject->trailBuffer.count + selfObject->trailBuffer.capacity) % selfObject->trailBuffer.capacity;
-        selfObject->trailBuffer.readPointer = start;
+        // 1D elastic collision formula for dx (repeat for dy)
+        float newDx1 = (selfObject->dx * (m1 - m2) + 2 * m2 * otherObject->dx) / (m1 + m2);
+        float newDx2 = (otherObject->dx * (m2 - m1) + 2 * m1 * selfObject->dx) / (m1 + m2);
 
-        for (int i = 0; i < selfObject->trailBuffer.count; ++i)
-        {
-            struct SDL_FRect *trail = readCirBuffer(&selfObject->trailBuffer);
+        float newDy1 = (selfObject->dy * (m1 - m2) + 2 * m2 * otherObject->dy) / (m1 + m2);
+        float newDy2 = (otherObject->dy * (m2 - m1) + 2 * m1 * selfObject->dy) / (m1 + m2);
 
-            /* Calculate relative coordinates*/
-            float TrailRelativeX = cameraRootX - trail->x;
-            float TrailRelativeY = cameraRootY - trail->y;
-
-            /* Apply zoom*/
-            TrailRelativeX *= zoom;
-            TrailRelativeY *= zoom;
-            float TrailSizeX = trail->w;
-            float TrailSizeY = trail->h;
-
-            if (!(
-                    TrailRelativeX + TrailSizeX < 0 || TrailRelativeX - TrailSizeX > WindowWidth ||
-                    TrailRelativeY + TrailSizeY < 0 || TrailRelativeY - TrailSizeY > WindowHeight))
-            {
-                SDL_FRect screenRect = {
-                    .x = TrailRelativeX,
-                    .y = TrailRelativeY,
-                    .w = TrailSizeX,
-                    .h = TrailSizeY}; // Create a copy
-
-                Uint8 r, g, b, a;
-                int steps = (selfObject->trailBuffer.readPointer - 1 - selfObject->trailBuffer.writePointer + selfObject->trailBuffer.capacity) % selfObject->trailBuffer.capacity;
-                Uint8 alphaval = 255.0f * (steps / (float)selfObject->trailBuffer.capacity);
-
-                SDL_GetRenderDrawColor(renderer, &r, &g, &b, &a);
-                SDL_SetRenderDrawColor(renderer, r, g, b, alphaval);
-                SDL_RenderFillRect(renderer, &screenRect);
-                SDL_SetRenderDrawColor(renderer, r, g, b, a);
-            }
-        }
-
-        selfObject->x += selfObject->dx * dt; // Apply dx
-        selfObject->y += selfObject->dy * dt; // Apply dy
-
-        /* Calculate relative coordinates*/
-        float ObjectRelativeX = cameraRootX - selfObject->x;
-        float ObjectRelativeY = cameraRootY - selfObject->y;
-
-        /* Apply zoom*/
-        ObjectRelativeX *= zoom;
-        ObjectRelativeY *= zoom;
-        float ObjectSize = selfObject->size * zoom;
-
-        /* Check if object is out-of-bound, if yes then don't render*/
-        if (!(
-                ObjectRelativeX + ObjectSize < 0 || ObjectRelativeX - ObjectSize > WindowWidth ||
-                ObjectRelativeY + ObjectSize < 0 || ObjectRelativeY - ObjectSize > WindowHeight))
-        {
-            /* Render the object*/
-            DrawCircle(ObjectSize, ObjectRelativeX, ObjectRelativeY);
-        }
+        selfObject->dx = newDx1;
+        selfObject->dy = newDy1;
+        otherObject->dx = newDx2;
+        otherObject->dy = newDy2;
+        return;
     }
 
-    // Render text
+    /* Newton's Law of Universal Gravitation*/
+    float force = 1000.0f * ((selfObject->mass * otherObject->mass) / (distanceBetweenObject * distanceBetweenObject) + 50.0f);
+
+    /* Normalizing DirectionX and DirectionY*/
+    float invDist = 1.0f / distanceBetweenObject;
+    float directionX = (otherObject->x - selfObject->x) * invDist;
+    float directionY = (otherObject->y - selfObject->y) * invDist;
+
+    /* Finding acceleration with a formula derived from Newton's second law */
+    float selfAccel = force / selfObject->mass;
+    selfObject->dx += directionX * selfAccel * dt;
+    selfObject->dy += directionY * selfAccel * dt;
+
+    float otherAccel = force / otherObject->mass;
+    otherObject->dx -= directionX * otherAccel * dt;
+    otherObject->dy -= directionY * otherAccel * dt;
+}
+
+void renderTrailForObject(struct Object *selfObject)
+{
+    int start = (selfObject->trailBuffer.writePointer - selfObject->trailBuffer.count + selfObject->trailBuffer.capacity) % selfObject->trailBuffer.capacity;
+    selfObject->trailBuffer.readPointer = start;
+
+    Uint8 PrevAlpha = 0;
+
+    Uint8 r, g, b, a;
+    SDL_GetRenderDrawColor(renderer, &r, &g, &b, &a);
+
+    for (int i = 0; i < selfObject->trailBuffer.count; ++i)
+    {
+        struct SDL_FRect *trail = readCirBuffer(&selfObject->trailBuffer);
+
+        /* Calculate relative coordinates*/
+        float TrailRelativeX = cameraRootX - trail->x;
+        float TrailRelativeY = cameraRootY - trail->y;
+
+        /* Apply zoom*/
+        TrailRelativeX *= zoom;
+        TrailRelativeY *= zoom;
+        float TrailSizeX = trail->w * (zoom + 0.5f);
+        float TrailSizeY = trail->h * (zoom + 0.5f);
+
+        if (!(
+                TrailRelativeX + TrailSizeX < 0 || TrailRelativeX - TrailSizeX > WindowWidth ||
+                TrailRelativeY + TrailSizeY < 0 || TrailRelativeY - TrailSizeY > WindowHeight))
+        {
+            SDL_FRect screenRect = {
+                .x = TrailRelativeX,
+                .y = TrailRelativeY,
+                .w = TrailSizeX,
+                .h = TrailSizeY}; // Create a copy
+
+            int steps = (selfObject->trailBuffer.readPointer - selfObject->trailBuffer.writePointer + selfObject->trailBuffer.capacity) % selfObject->trailBuffer.capacity;
+            Uint8 alphaval;
+
+            if (steps == 0)
+            {
+                alphaval = 0; // Fully transparent if there are no steps.
+            }
+            else if (steps == selfObject->trailBuffer.capacity - 1)
+            {
+                alphaval = 255; // Fully opaque when we are one step from being full.
+            } 
+            else
+            {
+                alphaval = (Uint8)(255.0f * ((float)steps / (float)selfObject->trailBuffer.capacity));
+            }
+
+            if (alphaval != PrevAlpha)
+            {
+                SDL_SetRenderDrawColor(renderer, r, g, b, alphaval);
+                PrevAlpha = alphaval;
+            }
+
+            SDL_RenderFillRect(renderer, &screenRect);
+        }
+    }
+    SDL_SetRenderDrawColor(renderer, r, g, b, a);
+}
+
+void renderObject(struct Object *selfObject)
+{
+    /* Calculate relative coordinates*/
+    float ObjectRelativeX = cameraRootX - selfObject->x;
+    float ObjectRelativeY = cameraRootY - selfObject->y;
+
+    /* Apply zoom*/
+    ObjectRelativeX *= zoom;
+    ObjectRelativeY *= zoom;
+    float ObjectSize = selfObject->size * zoom;
+
+    /* Check if object is out-of-bound, if yes then don't render*/
+    if (!(
+            ObjectRelativeX + ObjectSize < 0 || ObjectRelativeX - ObjectSize > WindowWidth ||
+            ObjectRelativeY + ObjectSize < 0 || ObjectRelativeY - ObjectSize > WindowHeight))
+    {
+        /* Render the object*/
+        DrawCircle(ObjectSize, ObjectRelativeX, ObjectRelativeY);
+    }
+}
+
+void renderText(float dt)
+{
     for (int i = 0; i < TextContainer.NumItems; ++i)
     {
         TextContainer.Data[i].lifetime -= dt;
@@ -571,6 +584,65 @@ SDL_AppResult SDL_AppIterate(void *appstate)
             SDL_RenderTexture(renderer, TextContainer.Data[i].Texture, NULL, &TextContainer.Data[i].dst);
         }
     }
+}
+
+/* This function runs once per frame, and is the heart of the program. */
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    Uint64 now = SDL_GetPerformanceCounter();
+    Uint64 freq = SDL_GetPerformanceFrequency();
+
+    float dt = (now - lastTime) / (float)freq;
+    lastTime = now;
+    if (dt > 0.05f)
+        dt = 0.05f; // cap at 50ms (20 FPS)
+
+    /* as you can see from this, rendering draws over whatever was drawn before it. */
+    SDL_SetRenderDrawColor(renderer, 1, 1, 1, SDL_ALPHA_OPAQUE); /* grey, full alpha (full opacity) */
+    SDL_RenderClear(renderer);                                   /* start with a blank canvas. */
+
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, SDL_ALPHA_OPAQUE); /* while, full alpha */
+
+    // Render and handle Objects
+    for (int i = 0; i < ObjectContainer.NumItems; ++i)
+    {
+        struct Object *selfObject = &ObjectContainer.Data[i];
+
+        if (!paused)
+        {
+            for (int j = i + 1; j < ObjectContainer.NumItems; ++j)
+            {
+                struct Object *otherObject = &ObjectContainer.Data[j];
+                calcPhysicsBetween2Objects(selfObject, otherObject, dt);
+            }
+
+            float prevX = selfObject->x;
+            float prevY = selfObject->y;
+
+            selfObject->x += selfObject->dx * dt; // Apply dx
+            selfObject->y += selfObject->dy * dt; // Apply dy
+
+            float steps = distance(selfObject->x, selfObject->y, prevX, prevY);
+            float jumps = 2.0f / (steps / 2.0f);
+
+            for (float t = 0; t < 1; t += jumps)
+            {
+                float lerpX = prevX + (selfObject->x - prevX) * t;
+                float lerpY = prevY + (selfObject->y - prevY) * t;
+                /* Append trail*/
+                writeCirBuffer(&selfObject->trailBuffer, (SDL_FRect){lerpX - 1.0f, lerpY - 1.0f, 2.0f, 2.0f});
+            }
+        }
+
+        /* Render trail*/
+        renderTrailForObject(selfObject);
+
+        /* Render object*/
+        renderObject(selfObject);
+    }
+
+    // Render text
+    renderText(dt);
 
     SDL_RenderPresent(renderer); /* put it all on the screen! */
 
